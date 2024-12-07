@@ -1,6 +1,8 @@
 #include <iostream>
 #include <windows.h>
 #include <chrono>
+#include <stdlib.h>
+#include <iomanip>
 
 HANDLE openSerialPort(LPCSTR portName, DWORD baudRate) {
     HANDLE hSerial = CreateFile(portName,
@@ -36,6 +38,19 @@ HANDLE openSerialPort(LPCSTR portName, DWORD baudRate) {
     return hSerial;
 }
 
+std::string serial_TimePoint(const std::chrono::time_point<std::chrono::_V2::system_clock>& time, const std::string& format){
+    _putenv("TZ=EST");
+    tzset();
+
+    std::time_t temp = std::chrono::_V2::system_clock::to_time_t(time);
+    std::tm tm = *std::localtime(&temp);
+    std::stringstream ss;
+    ss << std::put_time( &tm, format.c_str());
+    return ss.str();
+
+}
+
+
 void readDataAndWriteToFile(HANDLE hSerial, const char* filePath) {
     DWORD bytesRead;
     char buffer[1024];
@@ -55,9 +70,12 @@ void readDataAndWriteToFile(HANDLE hSerial, const char* filePath) {
         if (elapsedTime.count() >= 2) {
             break;
         }
-
+        std::chrono::time_point<std::chrono::_V2::system_clock> input = std::chrono::system_clock::now();
         ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, NULL);
         if (bytesRead > 0) {
+            std::string timestamp = serial_TimePoint(input, "EST: %Y-%m-%d %H:%M:%S\n");
+            DWORD timestampLength = static_cast<DWORD>(timestamp.size());
+            WriteFile(hFile, timestamp.c_str(),timestampLength,&dwBytesWritten, NULL);
             WriteFile(hFile, buffer, bytesRead, &dwBytesWritten, NULL);
         }
     }
@@ -65,7 +83,7 @@ void readDataAndWriteToFile(HANDLE hSerial, const char* filePath) {
 }
 
 int main() {
-    LPCSTR portName = "COM5";
+    LPCSTR portName = "COM3";
     DWORD baudRate = CBR_9600; // Adjust as needed
 
     HANDLE hSerial = openSerialPort(portName, baudRate);
