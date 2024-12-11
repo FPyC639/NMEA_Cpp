@@ -9,4 +9,6 @@
 bin/
 obj/
 
+a.exe
+
 # End of https://www.toptal.com/developers/gitignore/api/codeblocks
