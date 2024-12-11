@@ -1,17 +1,11 @@
 #include <iostream>
 #include <windows.h>
 #include <chrono>
-#include <stdlib.h>
 #include <iomanip>
+#include <sstream>
 
 HANDLE openSerialPort(LPCSTR portName, DWORD baudRate) {
-    HANDLE hSerial = CreateFile(portName,
-                                GENERIC_READ | GENERIC_WRITE,
-                                0,
-                                NULL,
-                                OPEN_EXISTING,
-                                0,
-                                NULL);
+    HANDLE hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
         std::cerr << "Error opening serial port" << std::endl;
         return INVALID_HANDLE_VALUE;
@@ -29,7 +23,8 @@ HANDLE openSerialPort(LPCSTR portName, DWORD baudRate) {
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
     dcbSerialParams.Parity = NOPARITY;
-    if(!SetCommState(hSerial, &dcbSerialParams)){
+
+    if (!SetCommState(hSerial, &dcbSerialParams)) {
         std::cerr << "Error setting COM state" << std::endl;
         CloseHandle(hSerial);
         return INVALID_HANDLE_VALUE;
@@ -38,26 +33,33 @@ HANDLE openSerialPort(LPCSTR portName, DWORD baudRate) {
     return hSerial;
 }
 
-std::string serial_TimePoint(const std::chrono::time_point<std::chrono::_V2::system_clock>& time, const std::string& format){
-    _putenv("TZ=EST");
-    tzset();
-
-    std::time_t temp = std::chrono::_V2::system_clock::to_time_t(time);
-    std::tm tm = *std::localtime(&temp);
-    std::stringstream ss;
-    ss << std::put_time( &tm, format.c_str());
-    return ss.str();
-
+std::string getCurrentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm = *std::localtime(&time);
+    std::ostringstream oss;
+    oss << "EST: " << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
 }
 
+void processBufferAndWrite(HANDLE hFile, const char* buffer, DWORD bytesRead) {
+    std::istringstream iss(std::string(buffer, bytesRead));
+    std::string line;
+    DWORD dwBytesWritten = 0;
+
+    while (std::getline(iss, line)) {
+        std::ostringstream oss;
+        oss << getCurrentTimestamp() << " " << line << "\r\n";
+        std::string output = oss.str();
+        WriteFile(hFile, output.c_str(), static_cast<DWORD>(output.size()), &dwBytesWritten, NULL);
+    }
+}
 
 void readDataAndWriteToFile(HANDLE hSerial, const char* filePath) {
     DWORD bytesRead;
-    char buffer[1024];
-    DWORD dwBytesWritten = 0;
-    HANDLE hFile;
+    char buffer[2048];
+    HANDLE hFile = CreateFile(filePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
-    hFile = CreateFile(filePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
         std::cerr << "Error opening file for writing" << std::endl;
         return;
@@ -67,32 +69,29 @@ void readDataAndWriteToFile(HANDLE hSerial, const char* filePath) {
     while (true) {
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsedTime = std::chrono::duration_cast<std::chrono::minutes>(currentTime - startTime);
-        if (elapsedTime.count() >= 2) {
-            break;
-        }
-        std::chrono::time_point<std::chrono::_V2::system_clock> input = std::chrono::system_clock::now();
-        ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, NULL);
+        if (elapsedTime.count() >= 1) break;
+
+        ReadFile(hSerial, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
         if (bytesRead > 0) {
-            std::string timestamp = serial_TimePoint(input, "EST: %Y-%m-%d %H:%M:%S\n");
-            DWORD timestampLength = static_cast<DWORD>(timestamp.size());
-            WriteFile(hFile, timestamp.c_str(),timestampLength,&dwBytesWritten, NULL);
-            WriteFile(hFile, buffer, bytesRead, &dwBytesWritten, NULL);
+            buffer[bytesRead] = '\0';  // Null-terminate the buffer
+            processBufferAndWrite(hFile, buffer, bytesRead);
         }
     }
+
     CloseHandle(hFile);
 }
 
 int main() {
     LPCSTR portName = "COM3";
-    DWORD baudRate = CBR_9600; // Adjust as needed
+    DWORD baudRate = CBR_9600;
 
     HANDLE hSerial = openSerialPort(portName, baudRate);
     if (hSerial == INVALID_HANDLE_VALUE) {
-        return 1; // Opening serial port failed
+        return 1;
     }
 
     readDataAndWriteToFile(hSerial, "output.txt");
-
     CloseHandle(hSerial);
+
     return 0;
 }
